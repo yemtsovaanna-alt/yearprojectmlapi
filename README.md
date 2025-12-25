@@ -1,10 +1,10 @@
 # ML Service API
 
-Полноценный ML-сервис на базе FastAPI для классификации изображений с использованием предобученной модели ResNet50.
+ML-сервис на базе FastAPI для детекции аномалий в логах с использованием модели Isolation Forest.
 
 ## Возможности
 
-- POST `/forward` - прогон данных через ML модель (изображения и JSON)
+- POST `/forward` - детекция аномалий в последовательности логов (Isolation Forest)
 - GET `/history` - просмотр истории запросов (требует JWT авторизацию администратора)
 - DELETE `/history` - удаление истории запросов (требует admin token в заголовке)
 - GET `/stats` - статистика запросов с квантилями и характеристиками (требует JWT авторизацию администратора)
@@ -15,7 +15,7 @@
 ## Структура проекта
 
 ```
-fastapitask/
+yearprojectmlapi/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                 # Основное приложение с endpoints
@@ -24,8 +24,14 @@ fastapitask/
 │   ├── models.py               # SQLAlchemy модели
 │   ├── schemas.py              # Pydantic схемы
 │   ├── auth.py                 # JWT авторизация
-│   ├── ml_model.py             # ML модель (ResNet50)
-│   └── imagenet_classes.json   # Классы ImageNet
+│   └── ml_model.py             # ML модель (Isolation Forest)
+├── models/
+│   └── isolation_forest.joblib # Обученная модель
+├── test_logs/                  # Тестовые файлы с логами
+│   ├── normal_logs.json
+│   ├── normal_logs_2.json
+│   ├── anomaly_logs.json
+│   └── anomaly_logs_2.json
 ├── alembic/
 │   ├── versions/
 │   │   └── 001_initial_migration.py
@@ -35,7 +41,8 @@ fastapitask/
 ├── requirements.txt
 ├── .env.example
 ├── .env
-├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
 └── README.md
 ```
 
@@ -44,7 +51,7 @@ fastapitask/
 ### 1. Клонирование репозитория
 
 ```bash
-cd fastapitask
+cd yearprojectmlapi
 ```
 
 ### 2. Создание виртуального окружения
@@ -129,54 +136,48 @@ curl -X POST "http://localhost:8000/token" \
 
 Сохраните `access_token` для последующих запросов.
 
-### 3. POST /forward - Классификация изображения
+### 3. POST /forward - Детекция аномалий в логах
 
 ```bash
 curl -X POST "http://localhost:8000/forward" \
-  -F "image=@/path/to/your/image.jpg"
-```
-
-Ответ:
-```json
-{
-  "result": {
-    "predictions": [
+  -H "Content-Type: application/json" \
+  -d '{
+    "logs": [
       {
-        "class": "golden_retriever",
-        "probability": 0.9234
+        "message": "Receiving block blk_-1608999687919862906 src: /10.250.19.102:54106",
+        "component": "DataNode$DataXceiver",
+        "level": "INFO"
       },
       {
-        "class": "labrador_retriever",
-        "probability": 0.0543
+        "message": "Received block blk_-1608999687919862906 of size 67108864",
+        "component": "DataNode$DataXceiver",
+        "level": "INFO"
       }
-    ],
-    "top_class": "golden_retriever",
-    "top_probability": 0.9234
-  }
-}
+    ]
+  }'
 ```
 
-### 4. POST /forward - Обработка JSON данных
-
-```bash
-curl -X POST "http://localhost:8000/forward" \
-  -F 'data={"text": "sample data", "value": 123}'
-```
-
-Ответ:
+Ответ (нормальные логи):
 ```json
 {
-  "result": {
-    "message": "JSON data processed",
-    "received_data": {
-      "text": "sample data",
-      "value": 123
-    }
-  }
+  "score": -0.5814839173818528,
+  "is_anomaly": false,
+  "threshold": -0.5827027071289144,
+  "num_events": 2
 }
 ```
 
-### 5. GET /history - Просмотр истории запросов
+Ответ (аномальные логи):
+```json
+{
+  "score": -0.6472622282626409,
+  "is_anomaly": true,
+  "threshold": -0.5827027071289144,
+  "num_events": 8
+}
+```
+
+### 4. GET /history - Просмотр истории запросов
 
 Требует JWT авторизацию с правами администратора:
 
@@ -192,21 +193,21 @@ curl -X GET "http://localhost:8000/history" \
   "items": [
     {
       "id": 1,
-      "request_type": "image",
-      "processing_time": 0.523,
-      "input_data_size": 102400,
-      "image_width": 800,
-      "image_height": 600,
+      "request_type": "log_anomaly_detection",
+      "processing_time": 0.023,
+      "input_data_size": 8,
+      "image_width": null,
+      "image_height": null,
       "status_code": 200,
       "result": "...",
       "error_message": null,
-      "created_at": "2025-12-24T10:30:00"
+      "created_at": "2025-12-25T10:30:00"
     }
   ]
 }
 ```
 
-### 6. DELETE /history - Удаление истории запросов
+### 5. DELETE /history - Удаление истории запросов
 
 Требует admin token в заголовке Authorization:
 
@@ -215,7 +216,7 @@ curl -X DELETE "http://localhost:8000/history" \
   -H "Authorization: Bearer admin_secret_token_12345"
 ```
 
-### 7. GET /stats - Статистика запросов
+### 6. GET /stats - Статистика запросов
 
 Требует JWT авторизацию с правами администратора:
 
@@ -228,13 +229,44 @@ curl -X GET "http://localhost:8000/stats" \
 ```json
 {
   "total_requests": 100,
-  "mean_processing_time": 0.456,
-  "median_processing_time": 0.423,
-  "percentile_95_processing_time": 0.789,
-  "percentile_99_processing_time": 1.234,
-  "average_input_size": 153600,
-  "average_image_width": 1024,
-  "average_image_height": 768
+  "mean_processing_time": 0.025,
+  "median_processing_time": 0.023,
+  "percentile_95_processing_time": 0.045,
+  "percentile_99_processing_time": 0.089,
+  "average_input_size": 8.5,
+  "average_image_width": null,
+  "average_image_height": null
+}
+```
+
+## Формат входных данных
+
+### Структура лога
+
+```json
+{
+  "message": "Текст лог-сообщения",
+  "component": "Компонент системы (опционально)",
+  "level": "Уровень логирования (опционально)"
+}
+```
+
+### Пример запроса
+
+```json
+{
+  "logs": [
+    {
+      "message": "Receiving block blk_-1608999687919862906",
+      "component": "DataNode$DataXceiver",
+      "level": "INFO"
+    },
+    {
+      "message": "Exception in receiveBlock java.io.IOException",
+      "component": "DataNode$DataXceiver",
+      "level": "ERROR"
+    }
+  ]
 }
 ```
 
@@ -243,28 +275,11 @@ curl -X GET "http://localhost:8000/stats" \
 - `200` - Успешная обработка запроса
 - `201` - Успешное создание ресурса
 - `204` - Успешное удаление (без тела ответа)
-- `400` - Неверный формат запроса (bad request)
+- `400` - Неверный формат запроса
 - `401` - Не авторизован
-- `403` - Доступ запрещен / Модель не смогла обработать данные
+- `403` - Доступ запрещен
 - `500` - Внутренняя ошибка сервера
-
-## Обработка ошибок
-
-### Неверный формат запроса (400)
-
-```json
-{
-  "detail": "bad request"
-}
-```
-
-### Модель не смогла обработать данные (403)
-
-```json
-{
-  "detail": "модель не смогла обработать данные"
-}
-```
+- `503` - Модель не загружена
 
 ## Миграции базы данных
 
@@ -306,10 +321,10 @@ uvicorn app.main:app --reload
 
 ## Технологии
 
-- **FastAPI** - современный веб-фреймворк для построения API
+- **FastAPI** - веб-фреймворк для построения API
 - **SQLAlchemy** - ORM для работы с базой данных
 - **Alembic** - инструмент миграций базы данных
-- **PyTorch + torchvision** - ML фреймворк и предобученная модель ResNet50
+- **scikit-learn** - Isolation Forest модель для детекции аномалий
 - **JWT (python-jose)** - авторизация и аутентификация
 - **Pydantic** - валидация данных
 - **aiosqlite** - асинхронный драйвер для SQLite

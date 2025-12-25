@@ -1,23 +1,5 @@
 # Тестирование ML Service API
 
-## Автоматическое тестирование
-
-### Запуск тестового скрипта
-
-```bash
-python test_api.py
-```
-
-Скрипт выполнит следующие тесты:
-1. Регистрация администратора
-2. Регистрация обычного пользователя
-3. Авторизация
-4. Отправка изображения на классификацию
-5. Отправка JSON данных
-6. Просмотр истории запросов
-7. Просмотр статистики
-8. Удаление истории (опционально)
-
 ## Ручное тестирование
 
 ### 1. Проверка работы сервера
@@ -29,11 +11,12 @@ curl http://localhost:8000/
 Ожидаемый ответ:
 ```json
 {
-  "message": "ML Service API",
+  "message": "ML Service API - Log Anomaly Detection",
   "version": "1.0.0",
   "endpoints": {
     "POST /register": "Register a new user",
     "POST /token": "Get JWT access token",
+    "POST /forward": "Detect anomalies in log sequence (Isolation Forest)",
     ...
   }
 }
@@ -77,77 +60,60 @@ curl -X POST "http://localhost:8000/token" \
 
 ### 4. Тестирование POST /forward
 
-#### С изображением
-
-Создайте тестовое изображение или используйте существующее:
+#### С нормальными логами
 
 ```bash
-curl -X POST "http://localhost:8000/forward" \
-  -F "image=@test_image.jpg"
+cat test_logs/normal_logs.json | curl -X POST "http://localhost:8000/forward" \
+  -H "Content-Type: application/json" \
+  -d @-
 ```
 
 Ожидаемый ответ (200 OK):
 ```json
 {
-  "result": {
-    "predictions": [
-      {
-        "class": "golden_retriever",
-        "probability": 0.8234
-      }
-    ],
-    "top_class": "golden_retriever",
-    "top_probability": 0.8234
-  }
+  "score": -0.5814839173818528,
+  "is_anomaly": false,
+  "threshold": -0.5827027071289144,
+  "num_events": 8
 }
 ```
 
-#### С JSON данными
+#### С аномальными логами
 
 ```bash
-curl -X POST "http://localhost:8000/forward" \
-  -F 'data={"text": "test data", "value": 123}'
+cat test_logs/anomaly_logs.json | curl -X POST "http://localhost:8000/forward" \
+  -H "Content-Type: application/json" \
+  -d @-
 ```
 
 Ожидаемый ответ (200 OK):
 ```json
 {
-  "result": {
-    "message": "JSON data processed",
-    "received_data": {
-      "text": "test data",
-      "value": 123
+  "score": -0.6472622282626409,
+  "is_anomaly": true,
+  "threshold": -0.5827027071289144,
+  "num_events": 8
+}
+```
+
+#### Тест ошибки 422 (validation error)
+
+```bash
+curl -X POST "http://localhost:8000/forward" \
+  -H "Content-Type: application/json" \
+  -d '{"logs": []}'
+```
+
+Ожидаемый ответ (422 Unprocessable Entity):
+```json
+{
+  "detail": [
+    {
+      "type": "too_short",
+      "loc": ["body", "logs"],
+      "msg": "List should have at least 1 item after validation, not 0"
     }
-  }
-}
-```
-
-#### Тест ошибки 400 (bad request)
-
-```bash
-curl -X POST "http://localhost:8000/forward"
-```
-
-Ожидаемый ответ (400 Bad Request):
-```json
-{
-  "detail": "bad request"
-}
-```
-
-#### Тест ошибки 403 (модель не смогла обработать)
-
-Отправьте некорректный файл (не изображение):
-
-```bash
-curl -X POST "http://localhost:8000/forward" \
-  -F "image=@text_file.txt"
-```
-
-Ожидаемый ответ (403 Forbidden):
-```json
-{
-  "detail": "модель не смогла обработать данные"
+  ]
 }
 ```
 
@@ -169,15 +135,15 @@ curl -X GET "http://localhost:8000/history" \
   "items": [
     {
       "id": 1,
-      "request_type": "image",
-      "processing_time": 0.523,
-      "input_data_size": 102400,
-      "image_width": 800,
-      "image_height": 600,
+      "request_type": "log_anomaly_detection",
+      "processing_time": 0.023,
+      "input_data_size": 8,
+      "image_width": null,
+      "image_height": null,
       "status_code": 200,
       "result": "...",
       "error_message": null,
-      "created_at": "2025-12-24T10:30:00"
+      "created_at": "2025-12-25T10:30:00"
     }
   ]
 }
@@ -229,13 +195,13 @@ curl -X GET "http://localhost:8000/stats" \
 ```json
 {
   "total_requests": 100,
-  "mean_processing_time": 0.456,
-  "median_processing_time": 0.423,
-  "percentile_95_processing_time": 0.789,
-  "percentile_99_processing_time": 1.234,
-  "average_input_size": 153600,
-  "average_image_width": 1024,
-  "average_image_height": 768
+  "mean_processing_time": 0.025,
+  "median_processing_time": 0.023,
+  "percentile_95_processing_time": 0.045,
+  "percentile_99_processing_time": 0.089,
+  "average_input_size": 8.5,
+  "average_image_width": null,
+  "average_image_height": null
 }
 ```
 
@@ -264,19 +230,6 @@ curl -X DELETE "http://localhost:8000/history" \
 }
 ```
 
-#### Тест без заголовка Authorization
-
-```bash
-curl -X DELETE "http://localhost:8000/history"
-```
-
-Ожидаемый ответ (401 Unauthorized):
-```json
-{
-  "detail": "Authorization header required"
-}
-```
-
 ## Тестирование через Swagger UI
 
 1. Откройте http://localhost:8000/docs
@@ -287,19 +240,16 @@ curl -X DELETE "http://localhost:8000/history"
    - Нажмите "Authorize"
    - Теперь можете тестировать защищенные endpoints
 
-## Нагрузочное тестирование
+## Тестовые файлы
 
-### С использованием Apache Bench
+В папке `test_logs/` находятся готовые тестовые файлы:
 
-```bash
-ab -n 1000 -c 10 http://localhost:8000/
-```
-
-### С использованием wrk
-
-```bash
-wrk -t12 -c400 -d30s http://localhost:8000/
-```
+| Файл | Описание | Ожидаемый результат |
+|------|----------|---------------------|
+| normal_logs.json | Нормальные HDFS логи | is_anomaly: false |
+| normal_logs_2.json | Нормальные логи (вариант 2) | is_anomaly: false |
+| anomaly_logs.json | Логи с ошибками | is_anomaly: true |
+| anomaly_logs_2.json | Логи с ошибками (вариант 2) | is_anomaly: true |
 
 ## Проверка базы данных
 
@@ -351,10 +301,9 @@ alembic downgrade -1
 - [ ] Повторная регистрация с тем же username возвращает ошибку
 - [ ] Авторизация с правильными credentials работает
 - [ ] Авторизация с неправильными credentials возвращает 401
-- [ ] POST /forward с изображением возвращает предсказания
-- [ ] POST /forward с JSON данными работает
-- [ ] POST /forward без данных возвращает 400
-- [ ] POST /forward с некорректным изображением возвращает 403
+- [ ] POST /forward с нормальными логами возвращает is_anomaly: false
+- [ ] POST /forward с аномальными логами возвращает is_anomaly: true
+- [ ] POST /forward с пустым списком возвращает 422
 - [ ] GET /history требует авторизацию
 - [ ] GET /history с токеном администратора возвращает данные
 - [ ] GET /history с токеном обычного пользователя возвращает 403
@@ -392,15 +341,11 @@ pip check
 
 ## Известные проблемы
 
-1. **Модель долго загружается при первом запуске**
-   - Это нормально, ResNet50 загружает веса из интернета
-   - При повторных запусках использует кеш
+1. **Модель не загружена (503)**
+   - Убедитесь, что файл `models/isolation_forest.joblib` существует
+   - Проверьте права доступа к файлу
 
-2. **Ошибка при обработке больших изображений**
-   - Убедитесь, что изображение не превышает размер 10MB
-   - Можно настроить лимит в FastAPI
-
-3. **JWT токен истекает**
+2. **JWT токен истекает**
    - Настройте время жизни в `.env` (JWT_EXPIRATION_MINUTES)
    - Получите новый токен через /token
 

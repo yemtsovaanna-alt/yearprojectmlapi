@@ -2,7 +2,7 @@
 
 ## Обзор
 
-ML Service API - это асинхронный веб-сервис для классификации изображений с использованием предобученной модели ResNet50. Сервис построен на FastAPI и поддерживает JWT авторизацию, хранение истории запросов и сбор статистики.
+ML Service API - это асинхронный веб-сервис для детекции аномалий в логах с использованием модели Isolation Forest. Сервис построен на FastAPI и поддерживает JWT авторизацию, хранение истории запросов и сбор статистики.
 
 ## Компоненты системы
 
@@ -13,7 +13,7 @@ ML Service API - это асинхронный веб-сервис для кла
 Endpoints:
 - `POST /register` - регистрация пользователей
 - `POST /token` - получение JWT токена
-- `POST /forward` - прогон данных через ML модель
+- `POST /forward` - детекция аномалий в логах
 - `GET /history` - просмотр истории запросов (admin)
 - `DELETE /history` - удаление истории (admin token)
 - `GET /stats` - статистика запросов (admin)
@@ -35,7 +35,7 @@ RequestHistory:
   - request_type
   - processing_time
   - input_data_size
-  - image_width, image_height
+  - image_width, image_height (legacy, не используется)
   - status_code
   - result
   - error_message
@@ -53,9 +53,11 @@ User:
 
 **app/schemas.py** - Pydantic схемы
 
+- `LogEntry` - структура одной лог-записи
+- `LogSequenceRequest` - запрос с последовательностью логов
+- `AnomalyResponse` - ответ с результатом детекции
 - Валидация входных данных
 - Сериализация/десериализация
-- Type safety
 - Автоматическая генерация документации
 
 ### 4. Authentication & Authorization
@@ -77,15 +79,23 @@ User:
 
 **app/ml_model.py** - ML модель
 
-- Предобученная ResNet50 (ImageNet weights)
-- Preprocessing pipeline:
-  - Resize 256x256
-  - Center crop 224x224
-  - Нормализация
-- Top-K предсказания
-- Обработка ошибок
+- Isolation Forest для детекции аномалий
+- Загрузка модели из joblib файла
+- Нормализация лог-сообщений:
+  - IP адреса → `<ip>`
+  - Hex значения → `<hex>`
+  - Пути → `<path>`
+  - Числа → `<num>`
+  - Block ID → `<blk>`
+- TF-IDF векторизация
+- Threshold-based классификация
 
-**app/imagenet_classes.json** - маппинг классов ImageNet
+**models/isolation_forest.joblib** - обученная модель
+
+Содержит:
+- `model` - обученный Isolation Forest
+- `vectorizer` - TF-IDF векторизатор
+- `threshold` - порог для классификации аномалий
 
 ### 6. Configuration
 
@@ -109,21 +119,23 @@ User:
 
 ## Поток данных
 
-### Классификация изображения
+### Детекция аномалий
 
 ```
 Client
-  ↓ POST /forward (multipart/form-data)
+  ↓ POST /forward (JSON с логами)
 FastAPI Endpoint
-  ↓ File validation
-ML Model (ResNet50)
-  ↓ Image preprocessing
-  ↓ Inference
-  ↓ Top-K predictions
+  ↓ Pydantic validation
+ML Model (Isolation Forest)
+  ↓ Нормализация сообщений
+  ↓ Токенизация
+  ↓ TF-IDF векторизация
+  ↓ Prediction (score_samples)
+  ↓ Сравнение с threshold
 Database
   ↓ Save request history
 Response
-  ↓ JSON with predictions
+  ↓ JSON с score, is_anomaly, threshold
 Client
 ```
 
@@ -165,7 +177,7 @@ Client
 - Pydantic схемы для всех входных данных
 - Type checking на уровне Python
 - Автоматическая валидация JSON
-- Проверка форматов файлов
+- Проверка минимальной длины списка логов
 
 ### 4. Обработка ошибок
 
@@ -174,43 +186,9 @@ Client
 - Логирование всех запросов в БД
 - Graceful degradation
 
-## Масштабируемость
-
-### Текущая архитектура
-
-- SQLite (подходит для разработки и малых нагрузок)
-- Синхронная обработка запросов
-- In-memory model loading
-
-### Возможности масштабирования
-
-1. **База данных**
-   - Замена SQLite на PostgreSQL/MySQL
-   - Connection pooling
-   - Read replicas
-   - Sharding по времени (history)
-
-2. **ML модель**
-   - Model serving (TorchServe, TensorFlow Serving)
-   - GPU acceleration
-   - Batch processing
-   - Model caching
-
-3. **API**
-   - Horizontal scaling (multiple workers)
-   - Load balancing (nginx, HAProxy)
-   - Caching (Redis)
-   - Rate limiting
-
-4. **Мониторинг**
-   - Prometheus metrics
-   - Grafana dashboards
-   - ELK stack для логов
-   - Health checks
-
 ## Зависимости
 
-### Production
+### Runtime
 
 ```
 FastAPI - веб-фреймворк
@@ -219,18 +197,10 @@ SQLAlchemy - ORM
 alembic - миграции БД
 pydantic - валидация данных
 python-jose - JWT
-passlib - хеширование паролей
-torch/torchvision - ML модель
-Pillow - обработка изображений
-```
-
-### Development
-
-```
-pytest - тестирование
-black - форматирование кода
-flake8 - линтинг
-mypy - type checking
+bcrypt - хеширование паролей
+scikit-learn - Isolation Forest модель
+joblib - сериализация модели
+numpy - численные операции
 ```
 
 ## Производительность
@@ -245,12 +215,11 @@ mypy - type checking
 2. **Database**
    - Индексы на часто запрашиваемые поля
    - Lazy loading для связей
-   - Batch inserts
 
 3. **ML Model**
-   - Модель загружается один раз при старте
-   - Batch prediction для нескольких изображений
-   - GPU acceleration (если доступно)
+   - Модель загружается один раз при первом запросе
+   - Ленивая инициализация (lazy loading)
+   - Векторизация через sparse matrices
 
 ### Метрики производительности
 
@@ -259,16 +228,15 @@ Endpoint `/stats` предоставляет:
 - Медиана (50-й перцентиль)
 - 95-й перцентиль
 - 99-й перцентиль
-- Характеристики входных данных
+- Средний размер входных данных
 
 ## Расширяемость
 
 ### Добавление новых моделей
 
 1. Создайте новый класс модели в `app/ml_model.py`
-2. Реализуйте метод `predict()`
-3. Зарегистрируйте модель в роутере
-4. Обновите схемы в `app/schemas.py`
+2. Реализуйте методы `predict()` и `predict_from_logs()`
+3. Обновите схемы в `app/schemas.py`
 
 ### Добавление новых endpoints
 
@@ -276,13 +244,6 @@ Endpoint `/stats` предоставляет:
 2. Создайте Pydantic схемы в `app/schemas.py`
 3. При необходимости обновите модели БД
 4. Создайте миграцию через alembic
-
-### Интеграция с внешними сервисами
-
-1. Добавьте клиент в отдельный модуль
-2. Используйте async HTTP клиент (httpx)
-3. Добавьте retry logic и circuit breaker
-4. Логируйте все внешние вызовы
 
 ## Тестирование
 
@@ -298,11 +259,11 @@ Endpoint `/stats` предоставляет:
 - Тесты БД операций
 - Тесты авторизации
 
-### E2E тесты
+### Тестовые данные
 
-- Полный флоу регистрации → авторизации → запроса
-- Тесты с реальными изображениями
-- Тесты производительности
+В папке `test_logs/` находятся примеры:
+- `normal_logs.json` - нормальные логи
+- `anomaly_logs.json` - аномальные логи
 
 ## Деплой
 
@@ -312,60 +273,29 @@ Endpoint `/stats` предоставляет:
 uvicorn app.main:app --reload
 ```
 
-### Production
+### Docker Compose
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+docker-compose up -d
 ```
-
-### Docker
-
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-## Мониторинг и логирование
-
-### Логи
-
-- Request/Response логирование
-- Error tracking
-- Performance metrics
-- Audit trail (история в БД)
-
-### Метрики
-
-- Request count
-- Response times (mean, percentiles)
-- Error rates
-- Model predictions distribution
 
 ## Best Practices
 
 1. **Код**
    - Понятные имена переменных и функций
-   - Минимум комментариев, self-documenting code
    - Type hints везде
    - Async/await для I/O
 
 2. **БД**
    - Используйте миграции для всех изменений схемы
-   - Индексы на JOIN колонках
-   - Не храните большие объекты в БД
+   - Индексы на часто используемых полях
 
 3. **Безопасность**
    - Никогда не коммитьте .env файл
-   - Используйте secrets management
    - Регулярно обновляйте зависимости
    - Валидируйте все входные данные
 
 4. **API**
-   - Версионирование API
    - Правильные HTTP коды
    - Понятные сообщения об ошибках
    - Документация (Swagger)

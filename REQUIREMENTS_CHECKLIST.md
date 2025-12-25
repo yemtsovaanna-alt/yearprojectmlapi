@@ -1,72 +1,65 @@
 # Чек-лист требований проекта
 
-## Основные требования (10 баллов)
+## Основные требования
 
 ### POST /forward endpoint
 
-**Требование:** Route типа POST на /forward, который принимает два формата данных
+**Требование:** Route типа POST на /forward для детекции аномалий в логах
 
 **Реализация:**
-- **JSON формат** (для данных без изображений):
-  - Принимает данные через multipart/form-data параметр `data`
-  - Файл: `app/main.py:92-146`
-  - Пример использования: `curl -X POST /forward -F 'data={"key": "value"}'`
+- Принимает JSON с массивом лог-записей
+- Файл: `app/main.py:81-129`
+- Использует модель Isolation Forest для детекции аномалий
+- Возвращает score, is_anomaly, threshold, num_events
 
-- **Multipart/form-data формат** (для изображений):
-  - Параметр `image` для изображения
-  - Файл: `app/main.py:92-146`
-  - Пример использования: `curl -X POST /forward -F "image=@test.jpg"`
+**Пример использования:**
+```bash
+curl -X POST http://localhost:8000/forward \
+  -H "Content-Type: application/json" \
+  -d '{
+    "logs": [
+      {"message": "Receiving block blk_123", "component": "DataNode", "level": "INFO"}
+    ]
+  }'
+```
+
+**Формат ответа:**
+```json
+{
+  "score": -0.58,
+  "is_anomaly": false,
+  "threshold": -0.58,
+  "num_events": 1
+}
+```
 
 ### Обработка ошибок
 
 **Требование:** Правильные коды ответов для разных ситуаций
 
 **Реализация:**
-- **400 Bad Request** - неверный формат запроса:
-  - Файл: `app/main.py:132-134`
-  - Возвращает `{"detail": "bad request"}`
-
-- **403 Forbidden** - модель не смогла обработать данные:
-  - Файл: `app/main.py:107-110`
-  - Возвращает `{"detail": "модель не смогла обработать данные"}`
-
-- **200 OK** - успешная обработка:
-  - Файл: `app/main.py:111-120` (изображения)
-  - Файл: `app/main.py:121-145` (JSON)
-
-### Формат ответа
-
-**Требование:** Результаты в подходящем формате
-
-**Реализация:**
-- **JSON для данных без изображений**:
-  - Схема: `app/schemas.py:ForwardResponse`
-  - Возвращает результат в поле `result`
-
-- **JSON для изображений**:
-  - Результат классификации в JSON формате
-  - Включает предсказания, класс, вероятность
-  - Файл: `app/main.py:115-120`
+- **422 Validation Error** - неверный формат запроса (пустой список логов)
+- **503 Service Unavailable** - модель не загружена
+- **500 Internal Server Error** - ошибка обработки
+- **200 OK** - успешная обработка
 
 ---
 
-## GET /history (5 баллов)
+## GET /history
 
 **Требование:** Показывать историю всех запросов из базы данных
 
 **Реализация:**
-- Endpoint реализован: `app/main.py:182-195`
+- Endpoint: `app/main.py:132-145`
 - Модель БД: `app/models.py:RequestHistory`
 - Хранит:
-  - Тип запроса (image/json)
+  - Тип запроса (log_anomaly_detection)
   - Время обработки
-  - Размер входных данных
-  - Размеры изображения (ширина/высота)
+  - Количество событий (input_data_size)
   - Код статуса
   - Результат
   - Сообщение об ошибке
   - Время создания
-- Возвращает список всех запросов с деталями
 - Требует JWT авторизацию администратора
 - Схема ответа: `app/schemas.py:HistoryResponse`
 
@@ -78,12 +71,12 @@ curl -X GET http://localhost:8000/history \
 
 ---
 
-## DELETE /history (2 балла, PRO)
+## DELETE /history
 
 **Требование:** Удаление истории с подтверждающим токеном
 
 **Реализация:**
-- Endpoint реализован: `app/main.py:198-206`
+- Endpoint: `app/main.py:148-155`
 - Требует admin token в заголовке `Authorization`
 - Верификация токена: `app/auth.py:verify_admin_token`
 - Токен настраивается через `.env` файл (`ADMIN_TOKEN`)
@@ -98,24 +91,20 @@ curl -X DELETE http://localhost:8000/history \
 
 ---
 
-## GET /stats (5 баллов)
+## GET /stats
 
 **Требование:** Статистика запросов с метриками
 
 **Реализация:**
-- Endpoint реализован: `app/main.py:209-251`
+- Endpoint: `app/main.py:158-201`
 - **Время обработки**:
   - Среднее (mean)
   - Медиана (50-й перцентиль)
   - 95-й перцентиль
   - 99-й перцентиль
-  - Реализация: `app/main.py:234-237`
 
 - **Характеристики входных запросов**:
-  - Средний размер данных
-  - Средняя ширина изображений
-  - Средняя высота изображений
-  - Реализация: `app/main.py:239-241`
+  - Средний размер данных (количество событий)
 
 - Использует NumPy для расчета квантилей
 - Требует JWT авторизацию администратора
@@ -131,19 +120,19 @@ curl -X GET http://localhost:8000/stats \
 ```json
 {
   "total_requests": 100,
-  "mean_processing_time": 0.456,
-  "median_processing_time": 0.423,
-  "percentile_95_processing_time": 0.789,
-  "percentile_99_processing_time": 1.234,
-  "average_input_size": 153600,
-  "average_image_width": 1024,
-  "average_image_height": 768
+  "mean_processing_time": 0.025,
+  "median_processing_time": 0.023,
+  "percentile_95_processing_time": 0.045,
+  "percentile_99_processing_time": 0.089,
+  "average_input_size": 8.5,
+  "average_image_width": null,
+  "average_image_height": null
 }
 ```
 
 ---
 
-## JWT авторизация (3 балла, PRO)
+## JWT авторизация
 
 **Требование:** Механизм авторизации при помощи JWT с ролями
 
@@ -167,13 +156,8 @@ curl -X GET http://localhost:8000/stats \
   - `GET /stats` - только для администраторов
 
 - **Хеширование паролей**:
-  - Использует bcrypt через passlib
+  - Использует bcrypt
   - Файл: `app/auth.py:get_password_hash`
-
-- **Dependency injection**:
-  - `get_current_user` - получение текущего пользователя
-  - `get_current_admin_user` - проверка прав администратора
-  - Файл: `app/auth.py:59-85`
 
 **Пример использования:**
 ```bash
@@ -193,7 +177,7 @@ curl -X GET http://localhost:8000/history \
 
 ---
 
-## Alembic миграции (5 баллов, PRO)
+## Alembic миграции
 
 **Требование:** Механизм миграций базы данных при помощи alembic
 
@@ -212,12 +196,6 @@ curl -X GET http://localhost:8000/history \
 - **Асинхронная поддержка**:
   - Использует `async_engine_from_config`
   - Поддержка SQLAlchemy 2.0
-  - Файл: `alembic/env.py:45-59`
-
-- **Функции миграций**:
-  - `upgrade()` - применение миграции
-  - `downgrade()` - откат миграции
-  - Offline режим поддерживается
 
 **Команды:**
 ```bash
@@ -236,72 +214,22 @@ alembic history
 
 ---
 
-## Дополнительные возможности
+## ML модель
 
-### Документация
-
-- **README.md** - основная документация
-- **QUICKSTART.md** - быстрый старт
-- **EXAMPLES.md** - примеры использования
-- **ARCHITECTURE.md** - архитектура проекта
-- **TESTING.md** - руководство по тестированию
-
-### ML модель
-
-- **ResNet50** предобученная на ImageNet
+- **Isolation Forest** для детекции аномалий в логах
 - **Preprocessing pipeline**:
-  - Resize 256x256
-  - Center crop 224x224
-  - Нормализация
-- **Top-K предсказания** (default: 5)
-- **Обработка ошибок** при некорректных изображениях
-
-### Вспомогательные скрипты
-
-- **create_admin.py** - создание администратора
-- **test_api.py** - автоматическое тестирование API
-
-### Контейнеризация
-
-- **Dockerfile** - для деплоя
-- **docker-compose.yml** - для локального запуска
-- **.dockerignore** - исключение файлов
-
-### Безопасность
-
-- Хеширование паролей (bcrypt)
-- JWT токены с истечением
-- Разделение прав доступа
-- Валидация входных данных
-- .env для секретов (не в git)
-
-### База данных
-
-- Асинхронная работа (aiosqlite)
-- SQLAlchemy ORM
-- Индексы на часто используемых полях
-- Логирование всех запросов
-
----
-
-## Итоговая оценка
-
-| Требование | Баллы | Статус |
-|-----------|-------|--------|
-| POST /forward | 10 | Выполнено |
-| GET /history | 5 | Выполнено |
-| DELETE /history (PRO) | 2 | Выполнено |
-| GET /stats | 5 | Выполнено |
-| JWT авторизация (PRO) | 3 | Выполнено |
-| Alembic миграции (PRO) | 5 | Выполнено |
-| **ИТОГО** | **30** | **Все выполнено** |
+  - Нормализация сообщений (IP, hex, paths, numbers, block IDs)
+  - Токенизация с component и level
+  - TF-IDF векторизация
+- **Threshold-based классификация**
+- **Файл модели**: `models/isolation_forest.joblib`
 
 ---
 
 ## Структура файлов
 
 ```
-fastapitask/
+yearprojectmlapi/
 ├── app/
 │   ├── __init__.py             # Инициализация пакета
 │   ├── main.py                 # Основное приложение
@@ -310,29 +238,34 @@ fastapitask/
 │   ├── models.py               # ORM модели
 │   ├── schemas.py              # Pydantic схемы
 │   ├── auth.py                 # JWT авторизация
-│   ├── ml_model.py             # ML модель
-│   └── imagenet_classes.json   # Классы ImageNet
+│   └── ml_model.py             # ML модель (Isolation Forest)
+├── models/
+│   └── isolation_forest.joblib # Обученная модель
+├── test_logs/                  # Тестовые файлы
+│   ├── normal_logs.json
+│   ├── normal_logs_2.json
+│   ├── anomaly_logs.json
+│   └── anomaly_logs_2.json
 ├── alembic/
 │   ├── versions/
-│   │   └── 001_initial_migration.py  # Начальная миграция
-│   ├── env.py                  # Alembic окружение
-│   └── script.py.mako          # Шаблон миграций
-├── alembic.ini                 # Конфигурация Alembic
-├── requirements.txt            # Зависимости
-├── .env                        # Переменные окружения
-├── .env.example                # Пример переменных
-├── .gitignore                  # Git ignore
-├── Dockerfile                  # Docker образ
-├── docker-compose.yml          # Docker Compose
-├── .dockerignore               # Docker ignore
-├── create_admin.py             # Создание администратора
-├── test_api.py                 # Тестирование API
-├── README.md                   # Основная документация
-├── QUICKSTART.md               # Быстрый старт
-├── EXAMPLES.md                 # Примеры использования
-├── ARCHITECTURE.md             # Архитектура
-├── TESTING.md                  # Тестирование
-└── REQUIREMENTS_CHECKLIST.md   # Этот файл
+│   │   └── 001_initial_migration.py
+│   ├── env.py
+│   └── script.py.mako
+├── alembic.ini
+├── requirements.txt
+├── .env
+├── .env.example
+├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
+├── create_admin.py
+├── README.md
+├── QUICKSTART.md
+├── EXAMPLES.md
+├── ARCHITECTURE.md
+├── TESTING.md
+├── DEPLOYMENT.md
+└── REQUIREMENTS_CHECKLIST.md
 ```
 
 ## Команды для проверки
@@ -344,14 +277,16 @@ pip install -r requirements.txt
 # Миграции
 alembic upgrade head
 
-# Запуск
+# Локальный запуск
 uvicorn app.main:app --reload
 
+# Docker запуск
+docker-compose up -d
+
 # Тестирование
-python test_api.py
+cat test_logs/normal_logs.json | curl -X POST http://localhost:8000/forward \
+  -H "Content-Type: application/json" -d @-
 
 # Документация
 open http://localhost:8000/docs
 ```
-
-Все требования проекта выполнены!

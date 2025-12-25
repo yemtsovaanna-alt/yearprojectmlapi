@@ -32,41 +32,78 @@ token = response.json()["access_token"]
 print(f"Access Token: {token}")
 ```
 
-### 2. Классификация изображения
+### 2. Детекция аномалий в логах
 
 ```python
 import requests
 
-# Загрузка изображения
-with open("cat.jpg", "rb") as f:
-    response = requests.post(
-        f"{BASE_URL}/forward",
-        files={"image": f}
-    )
-
-result = response.json()
-print(f"Top prediction: {result['result']['top_class']}")
-print(f"Confidence: {result['result']['top_probability']:.2%}")
-```
-
-### 3. Отправка JSON данных
-
-```python
-import requests
-import json
-
-data = {
-    "text": "Hello, world!",
-    "number": 42,
-    "nested": {"key": "value"}
+# Нормальные логи
+logs_normal = {
+    "logs": [
+        {
+            "message": "Receiving block blk_-1608999687919862906 src: /10.250.19.102:54106",
+            "component": "DataNode$DataXceiver",
+            "level": "INFO"
+        },
+        {
+            "message": "Received block blk_-1608999687919862906 of size 67108864",
+            "component": "DataNode$DataXceiver",
+            "level": "INFO"
+        },
+        {
+            "message": "Verification succeeded for blk_-1608999687919862906",
+            "component": "DataBlockScanner",
+            "level": "INFO"
+        }
+    ]
 }
 
 response = requests.post(
     f"{BASE_URL}/forward",
-    files={"data": json.dumps(data)}
+    json=logs_normal
 )
 
-print(response.json())
+result = response.json()
+print(f"Score: {result['score']:.4f}")
+print(f"Is Anomaly: {result['is_anomaly']}")
+print(f"Threshold: {result['threshold']:.4f}")
+print(f"Num Events: {result['num_events']}")
+```
+
+### 3. Детекция аномальных логов
+
+```python
+import requests
+
+# Аномальные логи (с ошибками)
+logs_anomaly = {
+    "logs": [
+        {
+            "message": "Exception in receiveBlock for block blk_-1608999687919862906 java.io.IOException",
+            "component": "DataNode$DataXceiver",
+            "level": "ERROR"
+        },
+        {
+            "message": "writeBlock received exception java.net.SocketTimeoutException: 60000 millis timeout",
+            "component": "DataNode$DataXceiver",
+            "level": "ERROR"
+        },
+        {
+            "message": "Lost connection to datanode 10.250.19.102:50010",
+            "component": "DFSClient",
+            "level": "ERROR"
+        }
+    ]
+}
+
+response = requests.post(
+    f"{BASE_URL}/forward",
+    json=logs_anomaly
+)
+
+result = response.json()
+print(f"Score: {result['score']:.4f}")
+print(f"Is Anomaly: {result['is_anomaly']}")  # True
 ```
 
 ### 4. Просмотр истории (требует авторизацию)
@@ -85,7 +122,7 @@ history = response.json()
 print(f"Total requests: {history['total']}")
 
 for item in history['items'][:5]:
-    print(f"- {item['request_type']}: {item['processing_time']:.3f}s")
+    print(f"- {item['request_type']}: {item['processing_time']:.3f}s, anomaly: {item['result']}")
 ```
 
 ### 5. Получение статистики (требует авторизацию)
@@ -141,18 +178,39 @@ curl -X POST "http://localhost:8000/token" \
   -d "username=admin&password=admin123"
 ```
 
-### Отправка изображения
+### Детекция аномалий в логах
 
 ```bash
 curl -X POST "http://localhost:8000/forward" \
-  -F "image=@/path/to/image.jpg"
+  -H "Content-Type: application/json" \
+  -d '{
+    "logs": [
+      {
+        "message": "Receiving block blk_-1608999687919862906",
+        "component": "DataNode$DataXceiver",
+        "level": "INFO"
+      },
+      {
+        "message": "Received block blk_-1608999687919862906 of size 67108864",
+        "component": "DataNode$DataXceiver",
+        "level": "INFO"
+      }
+    ]
+  }'
 ```
 
-### Отправка JSON данных
+### Использование тестовых файлов
 
 ```bash
-curl -X POST "http://localhost:8000/forward" \
-  -F 'data={"key": "value", "number": 123}'
+# Нормальные логи
+cat test_logs/normal_logs.json | curl -X POST "http://localhost:8000/forward" \
+  -H "Content-Type: application/json" \
+  -d @-
+
+# Аномальные логи
+cat test_logs/anomaly_logs.json | curl -X POST "http://localhost:8000/forward" \
+  -H "Content-Type: application/json" \
+  -d @-
 ```
 
 ### Просмотр истории
@@ -182,20 +240,36 @@ curl -X DELETE "http://localhost:8000/history" \
 
 ## JavaScript примеры
 
-### Отправка изображения
+### Детекция аномалий
 
 ```javascript
-const formData = new FormData();
-formData.append('image', fileInput.files[0]);
+const logs = {
+  logs: [
+    {
+      message: "Receiving block blk_-1608999687919862906",
+      component: "DataNode$DataXceiver",
+      level: "INFO"
+    },
+    {
+      message: "Received block blk_-1608999687919862906 of size 67108864",
+      component: "DataNode$DataXceiver",
+      level: "INFO"
+    }
+  ]
+};
 
 fetch('http://localhost:8000/forward', {
   method: 'POST',
-  body: formData
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify(logs)
 })
   .then(response => response.json())
   .then(data => {
-    console.log('Prediction:', data.result.top_class);
-    console.log('Confidence:', data.result.top_probability);
+    console.log('Score:', data.score);
+    console.log('Is Anomaly:', data.is_anomaly);
+    console.log('Threshold:', data.threshold);
   });
 ```
 
@@ -226,45 +300,51 @@ import requests
 try:
     response = requests.post(
         "http://localhost:8000/forward",
-        files={"image": open("test.jpg", "rb")}
+        json={"logs": []}  # Пустой список - ошибка
     )
     response.raise_for_status()
     result = response.json()
     print(result)
 except requests.exceptions.HTTPError as e:
-    if e.response.status_code == 400:
-        print("Bad request - check your input")
-    elif e.response.status_code == 403:
-        print("Model could not process data")
+    if e.response.status_code == 422:
+        print("Validation error - check your input format")
+    elif e.response.status_code == 503:
+        print("Model not loaded")
     else:
         print(f"Error: {e}")
 except Exception as e:
     print(f"Unexpected error: {e}")
 ```
 
-## Пакетная обработка изображений
+## Пакетная обработка логов
 
 ```python
 import requests
+import json
 from pathlib import Path
 
-image_folder = Path("images")
+log_folder = Path("test_logs")
 results = []
 
-for image_path in image_folder.glob("*.jpg"):
-    with open(image_path, "rb") as f:
-        response = requests.post(
-            "http://localhost:8000/forward",
-            files={"image": f}
-        )
-        if response.status_code == 200:
-            result = response.json()
-            results.append({
-                "filename": image_path.name,
-                "prediction": result["result"]["top_class"],
-                "confidence": result["result"]["top_probability"]
-            })
+for log_file in log_folder.glob("*.json"):
+    with open(log_file, "r") as f:
+        data = json.load(f)
+
+    response = requests.post(
+        "http://localhost:8000/forward",
+        json=data
+    )
+
+    if response.status_code == 200:
+        result = response.json()
+        results.append({
+            "filename": log_file.name,
+            "is_anomaly": result["is_anomaly"],
+            "score": result["score"],
+            "num_events": result["num_events"]
+        })
 
 for r in results:
-    print(f"{r['filename']}: {r['prediction']} ({r['confidence']:.2%})")
+    status = "ANOMALY" if r['is_anomaly'] else "NORMAL"
+    print(f"{r['filename']}: {status} (score: {r['score']:.4f}, events: {r['num_events']})")
 ```

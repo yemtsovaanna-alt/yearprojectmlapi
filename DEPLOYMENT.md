@@ -1,8 +1,8 @@
 # Руководство по деплою
 
-## Локальный деплой
+## Локальный запуск
 
-### Вариант 1: Прямой запуск
+### Прямой запуск
 
 ```bash
 # Установка зависимостей
@@ -15,49 +15,9 @@ alembic upgrade head
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-### Вариант 2: С несколькими workers (production)
+## Docker Compose
 
-```bash
-# Применение миграций
-alembic upgrade head
-
-# Запуск с несколькими workers
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
-
-### Вариант 3: С Gunicorn (production)
-
-```bash
-# Установка Gunicorn
-pip install gunicorn
-
-# Применение миграций
-alembic upgrade head
-
-# Запуск
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
-```
-
-## Docker деплой
-
-### Вариант 1: Docker
-
-```bash
-# Сборка образа
-docker build -t ml-service:latest .
-
-# Запуск контейнера
-docker run -d \
-  -p 8000:8000 \
-  -v ml_data:/app/data \
-  -e DATABASE_URL="sqlite+aiosqlite:////app/data/ml_service.db" \
-  -e SECRET_KEY="your-secret-key" \
-  -e ADMIN_TOKEN="your-admin-token" \
-  --name ml-service \
-  ml-service:latest
-```
-
-### Вариант 2: Docker Compose
+### Запуск
 
 ```bash
 # Запуск (миграции применяются автоматически при старте контейнера)
@@ -70,11 +30,27 @@ docker-compose logs -f
 docker-compose down
 ```
 
+### Пересборка после изменений
+
+```bash
+docker-compose down
+docker-compose build
+docker-compose up -d
+```
+
 **Примечание:** Docker контейнер автоматически запускает `alembic upgrade head` перед стартом приложения (см. Dockerfile CMD)
 
-## База данных в продакшене
+## База данных
 
-### PostgreSQL (рекомендуется для production)
+### SQLite (по умолчанию)
+
+SQLite используется по умолчанию и подходит для разработки и небольших нагрузок.
+
+```
+DATABASE_URL=sqlite+aiosqlite:///./ml_service.db
+```
+
+### PostgreSQL (опционально)
 
 1. **Изменение requirements.txt**
 ```bash
@@ -103,7 +79,7 @@ GRANT ALL PRIVILEGES ON DATABASE ml_service TO ml_user;
 alembic upgrade head
 ```
 
-## Мониторинг и логирование
+## Мониторинг
 
 ### Prometheus + Grafana
 
@@ -121,127 +97,9 @@ app = FastAPI(...)
 Instrumentator().instrument(app).expose(app)
 ```
 
-### Sentry для error tracking
-
-```bash
-pip install sentry-sdk[fastapi]
-```
-
-```python
-import sentry_sdk
-
-sentry_sdk.init(
-    dsn="your-sentry-dsn",
-    traces_sample_rate=1.0,
-)
-```
-
-## Безопасность в продакшене
-
-### 1. Firewall
-
-```bash
-# UFW на Ubuntu
-sudo ufw allow 22
-sudo ufw allow 80
-sudo ufw allow 443
-sudo ufw enable
-```
-
-### 2. Fail2ban
-
-```bash
-sudo apt install fail2ban -y
-sudo systemctl enable fail2ban
-sudo systemctl start fail2ban
-```
-
-### 3. Изменение секретов
-
-```bash
-# Генерация нового SECRET_KEY
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# Генерация нового ADMIN_TOKEN
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-### 4. HTTPS с Nginx
-
-```nginx
-# В Nginx конфигурации
-server {
-    listen 80;
-    server_name your-domain.com;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name your-domain.com;
-
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-## Резервное копирование
-
-### SQLite
-
-```bash
-# Backup
-sqlite3 ml_service.db ".backup ml_service_backup.db"
-
-# Или через cron (ежедневно в 2:00)
-0 2 * * * /usr/bin/sqlite3 /path/to/ml_service.db ".backup /backups/ml_service_$(date +\%Y\%m\%d).db"
-```
-
-### PostgreSQL
-
-```bash
-# Backup
-pg_dump -U ml_user -d ml_service > backup.sql
-
-# Restore
-psql -U ml_user -d ml_service < backup.sql
-
-# Автоматический backup
-0 2 * * * /usr/bin/pg_dump -U ml_user -d ml_service > /backups/ml_service_$(date +\%Y\%m\%d).sql
-```
-
-## Scaling
-
-### Horizontal Scaling
-
-1. Используйте PostgreSQL вместо SQLite
-2. Добавьте Redis для кеширования
-3. Load balancer (nginx/HAProxy)
-4. Несколько инстансов приложения
-
-### Vertical Scaling
-
-- CPU: Минимум 2 cores для PyTorch
-- RAM: Минимум 4GB, рекомендуется 8GB+
-- Disk: SSD для базы данных
-
-## Health Checks
-
-Добавьте в `app/main.py`:
-
-```python
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
-```
+3. **Настройка Grafana**
+- Добавьте Prometheus как data source
+- Импортируйте дашборд для FastAPI
 
 ## Работа с миграциями Alembic
 
@@ -252,7 +110,7 @@ async def health_check():
 alembic current
 
 # В Docker контейнере
-docker exec fastapitask-ml-service-1 alembic current
+docker exec yearprojectmlapi-ml-service-1 alembic current
 ```
 
 ### Создание новой миграции
@@ -300,16 +158,29 @@ alembic history
 alembic history --verbose
 ```
 
-## Rollback приложения
+## Резервное копирование
+
+### SQLite
 
 ```bash
-# Docker
-docker-compose down
-docker-compose pull
-docker-compose up -d
+# Backup
+sqlite3 ml_service.db ".backup ml_service_backup.db"
 
-# Database rollback (если нужно)
-docker exec fastapitask-ml-service-1 alembic downgrade -1
+# Или через cron (ежедневно в 2:00)
+0 2 * * * /usr/bin/sqlite3 /path/to/ml_service.db ".backup /backups/ml_service_$(date +\%Y\%m\%d).db"
+```
+
+### PostgreSQL
+
+```bash
+# Backup
+pg_dump -U ml_user -d ml_service > backup.sql
+
+# Restore
+psql -U ml_user -d ml_service < backup.sql
+
+# Автоматический backup
+0 2 * * * /usr/bin/pg_dump -U ml_user -d ml_service > /backups/ml_service_$(date +\%Y\%m\%d).sql
 ```
 
 ## Checklist перед деплоем
@@ -318,9 +189,17 @@ docker exec fastapitask-ml-service-1 alembic downgrade -1
 - [ ] ADMIN_TOKEN изменен на уникальный
 - [ ] .env файл не в git репозитории
 - [ ] Миграции применены
-- [ ] Firewall настроен (если нужно)
-- [ ] Backup настроен (если нужно)
-- [ ] Health checks работают
+- [ ] Модель isolation_forest.joblib присутствует в папке models/
+
+## Генерация секретов
+
+```bash
+# Генерация нового SECRET_KEY
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# Генерация нового ADMIN_TOKEN
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
 
 ## Полезные команды
 
