@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
@@ -10,7 +12,7 @@ class LogEntry(BaseModel):
 
 
 class LogSequenceRequest(BaseModel):
-    logs: list[LogEntry] = Field(..., min_length=1, description="Список лог-записей")
+    logs: list[LogEntry] = Field(..., min_length=1, description="List of log entries")
 
 
 class AnomalyResponse(BaseModel):
