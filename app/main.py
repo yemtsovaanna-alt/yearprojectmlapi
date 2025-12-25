@@ -1,6 +1,8 @@
 import time
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -29,6 +31,14 @@ from app.auth import (
 from app.ml_model import get_ml_model
 
 app = FastAPI(title="ML Service API", version="1.0.0")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "bad request"}
+    )
 
 
 @app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -111,9 +121,19 @@ async def forward(
         )
 
     except FileNotFoundError as e:
+        processing_time = time.time() - start_time
+        history_record = RequestHistory(
+            request_type="log_anomaly_detection",
+            processing_time=processing_time,
+            input_data_size=len(request.logs),
+            status_code=403,
+            error_message="модель не смогла обработать данные"
+        )
+        session.add(history_record)
+        await session.commit()
         raise HTTPException(
-            status_code=503,
-            detail=f"Model not loaded: {str(e)}"
+            status_code=403,
+            detail="модель не смогла обработать данные"
         )
     except Exception as e:
         processing_time = time.time() - start_time
@@ -121,12 +141,15 @@ async def forward(
             request_type="log_anomaly_detection",
             processing_time=processing_time,
             input_data_size=len(request.logs),
-            status_code=500,
-            error_message=str(e)
+            status_code=403,
+            error_message="модель не смогла обработать данные"
         )
         session.add(history_record)
         await session.commit()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=403,
+            detail="модель не смогла обработать данные"
+        )
 
 
 @app.get("/history", response_model=HistoryResponse)
