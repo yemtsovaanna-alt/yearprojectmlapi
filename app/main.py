@@ -1,27 +1,23 @@
 import time
-import base64
-from io import BytesIO
-from typing import Optional
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Header, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, delete
 from datetime import timedelta
-from PIL import Image
 
 from app.config import settings
 from app.database import get_database_session
 from app.models import RequestHistory, User
 from app.schemas import (
-    ForwardRequestJSON,
-    ForwardResponse,
     HistoryResponse,
     HistoryItem,
     StatsResponse,
     UserCreate,
     UserResponse,
-    Token
+    Token,
+    LogSequenceRequest,
+    AnomalyResponse
 )
 from app.auth import (
     authenticate_user,
@@ -30,7 +26,7 @@ from app.auth import (
     get_password_hash,
     verify_admin_token
 )
-from app.ml_model import ml_model
+from app.ml_model import get_ml_model
 
 app = FastAPI(title="ML Service API", version="1.0.0")
 
@@ -82,126 +78,55 @@ async def login_for_access_token(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.post("/forward", response_model=ForwardResponse)
-async def forward_prediction(
-    image: Optional[UploadFile] = File(None),
-    data: Optional[str] = None,
+@app.post("/forward", response_model=AnomalyResponse)
+async def forward(
+    request: LogSequenceRequest,
     session: AsyncSession = Depends(get_database_session)
 ):
+    """Детекция аномалий в последовательности логов."""
     start_time = time.time()
-    request_type = "unknown"
-    input_data_size = None
-    image_width = None
-    image_height = None
-    result = None
-    error_message = None
-    status_code = 200
 
     try:
-        if image is not None:
-            request_type = "image"
-            image_bytes = await image.read()
-            input_data_size = len(image_bytes)
+        model = get_ml_model()
+        logs_data = [log.model_dump() for log in request.logs]
+        result = model.predict_from_logs(logs_data)
 
-            try:
-                pil_image = Image.open(BytesIO(image_bytes))
-                image_width, image_height = pil_image.size
-            except Exception:
-                pass
-
-            prediction = ml_model.predict_from_bytes(image_bytes)
-
-            if prediction is None:
-                status_code = 403
-                error_message = "модель не смогла обработать данные"
-                raise HTTPException(status_code=403, detail=error_message)
-
-            result = str(prediction)
-            processing_time = time.time() - start_time
-
-            history_record = RequestHistory(
-                request_type=request_type,
-                processing_time=processing_time,
-                input_data_size=input_data_size,
-                image_width=image_width,
-                image_height=image_height,
-                status_code=status_code,
-                result=result,
-                error_message=error_message
-            )
-            session.add(history_record)
-            await session.commit()
-
-            return ForwardResponse(result=prediction)
-
-        elif data is not None:
-            request_type = "json"
-            try:
-                import json
-                json_data = json.loads(data)
-                input_data_size = len(data)
-            except Exception:
-                status_code = 400
-                error_message = "bad request"
-                raise HTTPException(status_code=400, detail="bad request")
-
-            result_data = {
-                "message": "JSON data processed",
-                "received_data": json_data,
-                "note": "This is a placeholder for JSON processing. Implement your logic here."
-            }
-            result = str(result_data)
-            processing_time = time.time() - start_time
-
-            history_record = RequestHistory(
-                request_type=request_type,
-                processing_time=processing_time,
-                input_data_size=input_data_size,
-                status_code=status_code,
-                result=result
-            )
-            session.add(history_record)
-            await session.commit()
-
-            return ForwardResponse(result=result_data)
-        else:
-            status_code = 400
-            error_message = "bad request"
-            raise HTTPException(status_code=400, detail="bad request")
-
-    except HTTPException:
         processing_time = time.time() - start_time
+
         history_record = RequestHistory(
-            request_type=request_type,
+            request_type="log_anomaly_detection",
             processing_time=processing_time,
-            input_data_size=input_data_size,
-            image_width=image_width,
-            image_height=image_height,
-            status_code=status_code,
-            error_message=error_message
+            input_data_size=len(logs_data),
+            status_code=200,
+            result=str(result)
         )
         session.add(history_record)
         await session.commit()
-        raise
 
+        return AnomalyResponse(
+            score=result["score"],
+            is_anomaly=result["is_anomaly"],
+            threshold=result["threshold"],
+            num_events=result["num_events"]
+        )
+
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Model not loaded: {str(e)}"
+        )
     except Exception as e:
         processing_time = time.time() - start_time
-        status_code = 500
-        error_message = str(e)
-
         history_record = RequestHistory(
-            request_type=request_type,
+            request_type="log_anomaly_detection",
             processing_time=processing_time,
-            input_data_size=input_data_size,
-            image_width=image_width,
-            image_height=image_height,
-            status_code=status_code,
-            error_message=error_message
+            input_data_size=len(request.logs),
+            status_code=500,
+            error_message=str(e)
         )
         session.add(history_record)
         await session.commit()
-
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/history", response_model=HistoryResponse)
@@ -279,12 +204,12 @@ async def get_statistics(
 @app.get("/")
 async def root():
     return {
-        "message": "ML Service API",
+        "message": "ML Service API - Log Anomaly Detection",
         "version": "1.0.0",
         "endpoints": {
             "POST /register": "Register a new user",
             "POST /token": "Get JWT access token",
-            "POST /forward": "Make a prediction (image or JSON)",
+            "POST /forward": "Detect anomalies in log sequence (Isolation Forest)",
             "GET /history": "Get request history (admin only)",
             "DELETE /history": "Delete request history (requires admin token)",
             "GET /stats": "Get statistics (admin only)"

@@ -3,6 +3,23 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class LogEntry(BaseModel):
+    message: str
+    component: Optional[str] = ""
+    level: Optional[str] = ""
+
+
+class LogSequenceRequest(BaseModel):
+    logs: list[LogEntry] = Field(..., min_length=1, description="Список лог-записей")
+
+
+class AnomalyResponse(BaseModel):
+    score: float
+    is_anomaly: bool
+    threshold: float
+    num_events: int
+
+
 class ForwardRequestJSON(BaseModel):
     data: dict
 
