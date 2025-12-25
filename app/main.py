@@ -3,6 +3,7 @@ import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.docs import get_redoc_html
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -30,7 +31,15 @@ from app.auth import (
 )
 from app.ml_model import get_ml_model
 
-app = FastAPI(title="ML Service API", version="1.0.0")
+app = FastAPI(title="ML Service API", version="1.0.0", openapi_version="3.0.2", redoc_url=None)
+
+@app.get("/redoc", include_in_schema=False)
+def redoc():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_js_url="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js",
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -93,7 +102,7 @@ async def forward(
     request: LogSequenceRequest,
     session: AsyncSession = Depends(get_database_session)
 ):
-    """Детекция аномалий в последовательности логов."""
+    """Detecting anomalies in log sequences."""
     start_time = time.time()
 
     try:
@@ -127,13 +136,13 @@ async def forward(
             processing_time=processing_time,
             input_data_size=len(request.logs),
             status_code=403,
-            error_message="модель не смогла обработать данные"
+            error_message="model was unable to process the data"
         )
         session.add(history_record)
         await session.commit()
         raise HTTPException(
             status_code=403,
-            detail="модель не смогла обработать данные"
+            detail="model was unable to process the data"
         )
     except Exception as e:
         processing_time = time.time() - start_time
@@ -142,13 +151,13 @@ async def forward(
             processing_time=processing_time,
             input_data_size=len(request.logs),
             status_code=403,
-            error_message="модель не смогла обработать данные"
+            error_message="model was unable to process the data"
         )
         session.add(history_record)
         await session.commit()
         raise HTTPException(
             status_code=403,
-            detail="модель не смогла обработать данные"
+            detail="model was unable to process the data"
         )
 
 
