@@ -19,14 +19,14 @@ from app.schemas import (
     UserResponse,
     Token,
     LogSequenceRequest,
-    AnomalyResponse
+    AnomalyResponse,
 )
 from app.auth import (
     authenticate_user,
     create_access_token,
     get_current_admin_user,
     get_password_hash,
-    verify_admin_token
+    verify_admin_token,
 )
 from app.ml_model import get_ml_model
 
@@ -35,30 +35,28 @@ app = FastAPI(title="ML Service API", version="1.0.0")
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=400,
-        content={"detail": "bad request"}
-    )
+    return JSONResponse(status_code=400, content={"detail": "bad request"})
 
 
-@app.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def register_user(
-    user_data: UserCreate,
-    session: AsyncSession = Depends(get_database_session)
+    user_data: UserCreate, session: AsyncSession = Depends(get_database_session)
 ):
-    existing_user = await session.execute(
-        select(User).where(User.username == user_data.username)
-    )
+    existing_user = await session.execute(select(User).where(User.username == user_data.username))
     if existing_user.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="Username already registered",
         )
 
     new_user = User(
         username=user_data.username,
         hashed_password=get_password_hash(user_data.password),
-        is_admin=user_data.is_admin
+        is_admin=user_data.is_admin,
     )
     session.add(new_user)
     await session.commit()
@@ -70,7 +68,7 @@ async def register_user(
 @app.post("/token", response_model=Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    session: AsyncSession = Depends(get_database_session)
+    session: AsyncSession = Depends(get_database_session),
 ):
     user = await authenticate_user(form_data.username, form_data.password, session)
     if not user:
@@ -91,11 +89,13 @@ async def login_for_access_token(
 @app.post("/forward", response_model=AnomalyResponse)
 async def forward(
     request: LogSequenceRequest,
-    session: AsyncSession = Depends(get_database_session)
+    session: AsyncSession = Depends(get_database_session),
 ):
     """Детекция аномалий в последовательности логов."""
     start_time = time.time()
 
+    if not isinstance(request.logs, list) or len(request.logs) == 0:
+        raise HTTPException(status_code=400, detail="bad request")
     try:
         model = get_ml_model()
         logs_data = [log.model_dump() for log in request.logs]
@@ -108,7 +108,7 @@ async def forward(
             processing_time=processing_time,
             input_data_size=len(logs_data),
             status_code=200,
-            result=str(result)
+            result=str(result),
         )
         session.add(history_record)
         await session.commit()
@@ -117,24 +117,9 @@ async def forward(
             score=result["score"],
             is_anomaly=result["is_anomaly"],
             threshold=result["threshold"],
-            num_events=result["num_events"]
+            num_events=result["num_events"],
         )
 
-    except FileNotFoundError as e:
-        processing_time = time.time() - start_time
-        history_record = RequestHistory(
-            request_type="log_anomaly_detection",
-            processing_time=processing_time,
-            input_data_size=len(request.logs),
-            status_code=403,
-            error_message="модель не смогла обработать данные"
-        )
-        session.add(history_record)
-        await session.commit()
-        raise HTTPException(
-            status_code=403,
-            detail="модель не смогла обработать данные"
-        )
     except Exception as e:
         processing_time = time.time() - start_time
         history_record = RequestHistory(
@@ -142,20 +127,17 @@ async def forward(
             processing_time=processing_time,
             input_data_size=len(request.logs),
             status_code=403,
-            error_message="модель не смогла обработать данные"
+            error_message="модель не смогла обработать данные",
         )
         session.add(history_record)
         await session.commit()
-        raise HTTPException(
-            status_code=403,
-            detail="модель не смогла обработать данные"
-        )
+        raise HTTPException(status_code=403, detail="модель не смогла обработать данные")
 
 
 @app.get("/history", response_model=HistoryResponse)
 async def get_request_history(
     current_user: User = Depends(get_current_admin_user),
-    session: AsyncSession = Depends(get_database_session)
+    session: AsyncSession = Depends(get_database_session),
 ):
     result = await session.execute(
         select(RequestHistory).order_by(RequestHistory.created_at.desc())
@@ -164,14 +146,14 @@ async def get_request_history(
 
     return HistoryResponse(
         total=len(history_items),
-        items=[HistoryItem.model_validate(item) for item in history_items]
+        items=[HistoryItem.model_validate(item) for item in history_items],
     )
 
 
 @app.delete("/history", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_request_history(
     session: AsyncSession = Depends(get_database_session),
-    verified: bool = Depends(verify_admin_token)
+    verified: bool = Depends(verify_admin_token),
 ):
     await session.execute(delete(RequestHistory))
     await session.commit()
@@ -181,7 +163,7 @@ async def delete_request_history(
 @app.get("/stats", response_model=StatsResponse)
 async def get_statistics(
     current_user: User = Depends(get_current_admin_user),
-    session: AsyncSession = Depends(get_database_session)
+    session: AsyncSession = Depends(get_database_session),
 ):
     result = await session.execute(select(RequestHistory))
     all_records = result.scalars().all()
@@ -193,11 +175,13 @@ async def get_statistics(
             median_processing_time=0.0,
             percentile_95_processing_time=0.0,
             percentile_99_processing_time=0.0,
-            average_input_size=None
+            average_input_size=None,
         )
 
     processing_times = [record.processing_time for record in all_records]
-    input_sizes = [record.input_data_size for record in all_records if record.input_data_size is not None]
+    input_sizes = [
+        record.input_data_size for record in all_records if record.input_data_size is not None
+    ]
 
     mean_time = float(np.mean(processing_times))
     median_time = float(np.percentile(processing_times, 50))
@@ -212,7 +196,7 @@ async def get_statistics(
         median_processing_time=median_time,
         percentile_95_processing_time=p95_time,
         percentile_99_processing_time=p99_time,
-        average_input_size=avg_input_size
+        average_input_size=avg_input_size,
     )
 
 
@@ -227,6 +211,6 @@ async def root():
             "POST /forward": "Detect anomalies in log sequence (Isolation Forest)",
             "GET /history": "Get request history (admin only)",
             "DELETE /history": "Delete request history (requires admin token)",
-            "GET /stats": "Get statistics (admin only)"
-        }
+            "GET /stats": "Get statistics (admin only)",
+        },
     }

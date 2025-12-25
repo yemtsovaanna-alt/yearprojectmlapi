@@ -50,57 +50,6 @@ SQLite используется по умолчанию и подходит дл
 DATABASE_URL=sqlite+aiosqlite:///./ml_service.db
 ```
 
-### PostgreSQL (опционально)
-
-1. **Изменение requirements.txt**
-```bash
-# Добавьте
-asyncpg==0.29.0
-```
-
-2. **Изменение DATABASE_URL в .env**
-```
-DATABASE_URL=postgresql+asyncpg://user:password@localhost/dbname
-```
-
-3. **Настройка PostgreSQL**
-```bash
-# Установка
-sudo apt install postgresql postgresql-contrib -y
-
-# Создание БД
-sudo -u postgres psql
-CREATE DATABASE ml_service;
-CREATE USER ml_user WITH PASSWORD 'strong_password';
-GRANT ALL PRIVILEGES ON DATABASE ml_service TO ml_user;
-\q
-
-# Применение миграций
-alembic upgrade head
-```
-
-## Мониторинг
-
-### Prometheus + Grafana
-
-1. **Добавление метрик**
-```bash
-pip install prometheus-fastapi-instrumentator
-```
-
-2. **В app/main.py**
-```python
-from prometheus_fastapi_instrumentator import Instrumentator
-
-app = FastAPI(...)
-
-Instrumentator().instrument(app).expose(app)
-```
-
-3. **Настройка Grafana**
-- Добавьте Prometheus как data source
-- Импортируйте дашборд для FastAPI
-
 ## Работа с миграциями Alembic
 
 ### Проверка текущей версии
@@ -168,19 +117,6 @@ sqlite3 ml_service.db ".backup ml_service_backup.db"
 
 # Или через cron (ежедневно в 2:00)
 0 2 * * * /usr/bin/sqlite3 /path/to/ml_service.db ".backup /backups/ml_service_$(date +\%Y\%m\%d).db"
-```
-
-### PostgreSQL
-
-```bash
-# Backup
-pg_dump -U ml_user -d ml_service > backup.sql
-
-# Restore
-psql -U ml_user -d ml_service < backup.sql
-
-# Автоматический backup
-0 2 * * * /usr/bin/pg_dump -U ml_user -d ml_service > /backups/ml_service_$(date +\%Y\%m\%d).sql
 ```
 
 ## Checklist перед деплоем
