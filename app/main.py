@@ -170,15 +170,11 @@ async def get_statistics(
             median_processing_time=0.0,
             percentile_95_processing_time=0.0,
             percentile_99_processing_time=0.0,
-            average_input_size=None,
-            average_image_width=None,
-            average_image_height=None
+            average_input_size=None
         )
 
     processing_times = [record.processing_time for record in all_records]
     input_sizes = [record.input_data_size for record in all_records if record.input_data_size is not None]
-    image_widths = [record.image_width for record in all_records if record.image_width is not None]
-    image_heights = [record.image_height for record in all_records if record.image_height is not None]
 
     mean_time = float(np.mean(processing_times))
     median_time = float(np.percentile(processing_times, 50))
@@ -186,8 +182,6 @@ async def get_statistics(
     p99_time = float(np.percentile(processing_times, 99))
 
     avg_input_size = float(np.mean(input_sizes)) if input_sizes else None
-    avg_image_width = float(np.mean(image_widths)) if image_widths else None
-    avg_image_height = float(np.mean(image_heights)) if image_heights else None
 
     return StatsResponse(
         total_requests=len(all_records),
@@ -195,9 +189,7 @@ async def get_statistics(
         median_processing_time=median_time,
         percentile_95_processing_time=p95_time,
         percentile_99_processing_time=p99_time,
-        average_input_size=avg_input_size,
-        average_image_width=avg_image_width,
-        average_image_height=avg_image_height
+        average_input_size=avg_input_size
     )
 
 

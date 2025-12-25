@@ -35,7 +35,6 @@ RequestHistory:
   - request_type
   - processing_time
   - input_data_size
-  - image_width, image_height (legacy, не используется)
   - status_code
   - result
   - error_message

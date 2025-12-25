@@ -20,21 +20,11 @@ class AnomalyResponse(BaseModel):
     num_events: int
 
 
-class ForwardRequestJSON(BaseModel):
-    data: dict
-
-
-class ForwardResponse(BaseModel):
-    result: dict
-
-
 class HistoryItem(BaseModel):
     id: int
     request_type: str
     processing_time: float
     input_data_size: Optional[int]
-    image_width: Optional[int]
-    image_height: Optional[int]
     status_code: int
     result: Optional[str]
     error_message: Optional[str]
@@ -56,8 +46,6 @@ class StatsResponse(BaseModel):
     percentile_95_processing_time: float
     percentile_99_processing_time: float
     average_input_size: Optional[float]
-    average_image_width: Optional[float]
-    average_image_height: Optional[float]
 
 
 class UserCreate(BaseModel):

@@ -124,9 +124,7 @@ curl -X GET http://localhost:8000/stats \
   "median_processing_time": 0.023,
   "percentile_95_processing_time": 0.045,
   "percentile_99_processing_time": 0.089,
-  "average_input_size": 8.5,
-  "average_image_width": null,
-  "average_image_height": null
+  "average_input_size": 8.5
 }
 ```
 
